@@ -9,6 +9,9 @@
 		// owner_only: somente o proprietário
 		// open: qualquer pessoa pode ativar o bot
 		"ACCESS_MODE": "approval",
+		"DISCORD_OWNER_USER_ID": "SUBSTITUA_PELO_SEU_ID",
+		"DISCORD_ACCESS_MODE": "approval",
+		"DISCORD_DELIVERY_MODE": "dm",
 		"CHECK_INTERVAL_LABEL": "30 minutos"
 	},
 	"observability": {

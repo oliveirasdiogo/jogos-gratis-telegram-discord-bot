@@ -20,7 +20,9 @@ export interface Env {
   DISCORD_APPLICATION_ID: string;
   DISCORD_PUBLIC_KEY: string;
   DISCORD_BOT_TOKEN: string;
-  DISCORD_GUILD_ID?: string;
+  DISCORD_OWNER_USER_ID: string;
+  DISCORD_ACCESS_MODE?: string;
+  DISCORD_DELIVERY_MODE?: string;
   ADMIN_SETUP_KEY: string;
   OWNER_CHAT_ID: string;
   ACCESS_MODE?: string;

@@ -117,12 +117,12 @@ export async function editDiscordInteractionResponse(
 export async function registerDiscordCommands(
   token: string,
   applicationId: string,
-  guildId?: string,
+  deliveryMode: "dm" | "channel" | "both" = "dm",
 ): Promise<void> {
   const commands = [
     {
       name: "ativar",
-      description: "Ativa avisos de jogos grátis neste canal",
+      description: "Ativa avisos de jogos grátis nesta conversa",
     },
     {
       name: "agora",
@@ -134,7 +134,7 @@ export async function registerDiscordCommands(
     },
     {
       name: "plataformas",
-      description: "Escolhe as lojas acompanhadas neste canal",
+      description: "Escolhe as lojas acompanhadas nesta conversa",
       options: [
         {
           type: 3,
@@ -146,24 +146,50 @@ export async function registerDiscordCommands(
     },
     {
       name: "status",
-      description: "Mostra a configuração deste canal",
+      description: "Mostra a configuração desta conversa",
     },
     {
       name: "parar",
-      description: "Desativa os avisos automáticos neste canal",
+      description: "Desativa os avisos automáticos nesta conversa",
     },
     {
       name: "ajuda",
       description: "Mostra os comandos disponíveis",
     },
+    {
+      name: "pendentes",
+      description: "Lista solicitações aguardando aprovação",
+    },
+    {
+      name: "aprovar",
+      description: "Aprova um usuário para receber avisos",
+      options: [{
+        type: 3,
+        name: "usuario",
+        description: "ID do usuário exibido em /pendentes",
+        required: true,
+      }],
+    },
+    {
+      name: "negar",
+      description: "Nega o acesso de um usuário",
+      options: [{
+        type: 3,
+        name: "usuario",
+        description: "ID do usuário exibido em /pendentes",
+        required: true,
+      }],
+    },
   ];
 
-  const path = guildId
-    ? `/applications/${applicationId}/guilds/${guildId}/commands`
-    : `/applications/${applicationId}/commands`;
-  await discordApi(token, path, {
+  const contexts = deliveryMode === "dm"
+    ? [1]
+    : deliveryMode === "channel"
+    ? [0]
+    : [0, 1];
+  await discordApi(token, `/applications/${applicationId}/commands`, {
     method: "PUT",
-    body: JSON.stringify(commands),
+    body: JSON.stringify(commands.map((command) => ({ ...command, contexts }))),
   });
 }
 

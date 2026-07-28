@@ -108,8 +108,9 @@ npx wrangler secret put DISCORD_PUBLIC_KEY
 npx wrangler secret put DISCORD_BOT_TOKEN
 ```
 
-Durante testes, `DISCORD_GUILD_ID` registra comandos imediatamente apenas no
-servidor informado. Sem esse valor, os comandos são globais.
+Por padrão, os avisos são enviados em DM e novos usuários precisam da aprovação
+do proprietário. `DISCORD_DELIVERY_MODE` permite escolher `dm`, `channel` ou
+`both`; `DISCORD_ACCESS_MODE` aceita `approval`, `owner_only` ou `open`.
 
 O passo a passo completo está em [docs/DISCORD.md](docs/DISCORD.md).
 
@@ -140,7 +141,8 @@ Os exemplos exatos estão nos guias de cada plataforma.
 | `/ajuda` | `/ajuda` | Mostrar ajuda |
 
 No Discord, ativar, parar e alterar plataformas exige a permissão
-**Gerenciar servidor**.
+**Gerenciar servidor** apenas quando o destino for um canal. O proprietário
+administra solicitações com `/pendentes`, `/aprovar` e `/negar`.
 
 ## Segurança
 

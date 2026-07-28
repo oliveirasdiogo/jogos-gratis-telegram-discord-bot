@@ -54,11 +54,15 @@ async function handleDiscordSetup(
   await registerDiscordCommands(
     env.DISCORD_BOT_TOKEN,
     env.DISCORD_APPLICATION_ID,
-    env.DISCORD_GUILD_ID?.trim() || undefined,
+    env.DISCORD_DELIVERY_MODE === "channel" ||
+        env.DISCORD_DELIVERY_MODE === "both"
+      ? env.DISCORD_DELIVERY_MODE
+      : "dm",
   );
   return json({
     ok: true,
-    scope: env.DISCORD_GUILD_ID ? "guild" : "global",
+    scope: "global",
+    context: env.DISCORD_DELIVERY_MODE ?? "dm",
     interactions_endpoint: `${new URL(request.url).origin}/discord/interactions`,
   });
 }

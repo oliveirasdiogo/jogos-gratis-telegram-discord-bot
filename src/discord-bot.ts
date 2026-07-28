@@ -1,8 +1,10 @@
 import {
   deactivateDiscordSubscriber,
   getDiscordSubscriber,
+  listPendingDiscordSubscribers,
   recordDiscordManualDelivery,
   replaceDiscordPlatforms,
+  reviewDiscordAccess,
   upsertDiscordSubscriber,
   type DiscordSubscriber,
 } from "./discord-db";
@@ -49,13 +51,6 @@ interface DiscordInteraction {
 const EPHEMERAL = 64;
 const MANAGE_GUILD = 1n << 5n;
 
-function interactionResponse(
-  type: number,
-  data?: Record<string, unknown>,
-): Response {
-  return Response.json(data ? { type, data } : { type });
-}
-
 function hasManageGuild(interaction: DiscordInteraction): boolean {
   try {
     return (
@@ -64,6 +59,27 @@ function hasManageGuild(interaction: DiscordInteraction): boolean {
   } catch {
     return false;
   }
+}
+
+function deliveryMode(env: Env): "dm" | "channel" | "both" {
+  return env.DISCORD_DELIVERY_MODE === "channel" ||
+      env.DISCORD_DELIVERY_MODE === "both"
+    ? env.DISCORD_DELIVERY_MODE
+    : "dm";
+}
+
+function accessMode(env: Env): "approval" | "owner_only" | "open" {
+  return env.DISCORD_ACCESS_MODE === "owner_only" ||
+      env.DISCORD_ACCESS_MODE === "open"
+    ? env.DISCORD_ACCESS_MODE
+    : "approval";
+}
+
+function interactionResponse(
+  type: number,
+  data?: Record<string, unknown>,
+): Response {
+  return Response.json(data ? { type, data } : { type });
 }
 
 function optionValue(
@@ -139,32 +155,140 @@ async function processCommand(
   env: Env,
 ): Promise<void> {
   const channelId = interaction.channel_id;
-  const guildId = interaction.guild_id;
   const user = interaction.member?.user ?? interaction.user;
   const name = interaction.data?.name;
-  if (!channelId || !guildId || !user || !name) {
+  if (!channelId || !user || !name) {
     await editDiscordInteractionResponse(
       interaction.application_id,
       interaction.token,
-      "Este comando precisa ser usado em um canal de servidor.",
+      "Não foi possível identificar esta conversa.",
+    );
+    return;
+  }
+
+  const mode = deliveryMode(env);
+  if (interaction.guild_id && mode === "dm") {
+    await editDiscordInteractionResponse(
+      interaction.application_id,
+      interaction.token,
+      "Este bot envia avisos por mensagem direta. Abra a conversa privada com o bot e use o comando novamente.",
+    );
+    return;
+  }
+  if (!interaction.guild_id && mode === "channel") {
+    await editDiscordInteractionResponse(
+      interaction.application_id,
+      interaction.token,
+      "Esta instalação recebe avisos em canais de servidor. Use o comando no canal desejado.",
+    );
+    return;
+  }
+
+  const isOwner = user.id === env.DISCORD_OWNER_USER_ID?.trim();
+  const isGuild = Boolean(interaction.guild_id);
+  const ownerCommands = new Set(["pendentes", "aprovar", "negar"]);
+  if (ownerCommands.has(name)) {
+    if (!isOwner) {
+      await editDiscordInteractionResponse(
+        interaction.application_id,
+        interaction.token,
+        "Este comando está disponível somente para o proprietário do bot.",
+      );
+      return;
+    }
+
+    if (name === "pendentes") {
+      const pending = await listPendingDiscordSubscribers(env.DB);
+      const text = pending.length === 0
+        ? "Não há solicitações pendentes."
+        : [
+            "**Solicitações pendentes**",
+            ...pending.map((entry) =>
+              `• usuário \`${entry.activatedBy}\` — destino \`${entry.channelId}\``
+            ),
+          ].join("\n");
+      await editDiscordInteractionResponse(
+        interaction.application_id,
+        interaction.token,
+        text,
+      );
+      return;
+    }
+
+    const requestedUserId = optionValue(interaction, "usuario")?.trim();
+    if (!requestedUserId) {
+      await editDiscordInteractionResponse(
+        interaction.application_id,
+        interaction.token,
+        "Informe o ID exibido por `/pendentes`.",
+      );
+      return;
+    }
+    const approved = name === "aprovar";
+    const reviewed = await reviewDiscordAccess(
+      env.DB,
+      requestedUserId,
+      approved ? "approved" : "denied",
+    );
+    if (!reviewed) {
+      await editDiscordInteractionResponse(
+        interaction.application_id,
+        interaction.token,
+        "Solicitação não encontrada.",
+      );
+      return;
+    }
+    await editDiscordInteractionResponse(
+      interaction.application_id,
+      interaction.token,
+      approved
+        ? `✅ Usuário \`${requestedUserId}\` aprovado.`
+        : `🚫 Usuário \`${requestedUserId}\` negado.`,
+    );
+    await sendDiscordMessage(
+      env.DISCORD_BOT_TOKEN,
+      reviewed.channelId,
+      approved
+        ? "✅ Seu acesso aos avisos de jogos grátis foi aprovado."
+        : "🚫 Sua solicitação de acesso aos avisos foi negada.",
     );
     return;
   }
 
   if (name === "ativar") {
-    if (!hasManageGuild(interaction)) {
+    if (isGuild && !hasManageGuild(interaction)) {
       await editDiscordInteractionResponse(
         interaction.application_id,
         interaction.token,
-        "Você precisa da permissão **Gerenciar servidor** para ativar avisos.",
+        "Você precisa da permissão **Gerenciar servidor** para ativar este canal.",
       );
       return;
     }
-    await upsertDiscordSubscriber(env.DB, channelId, guildId, user.id);
+    const configuredAccess = accessMode(env);
+    if (configuredAccess === "owner_only" && !isOwner) {
+      await editDiscordInteractionResponse(
+        interaction.application_id,
+        interaction.token,
+        "Esta instalação é exclusiva do proprietário.",
+      );
+      return;
+    }
+    const status = isOwner || configuredAccess === "open"
+      ? "approved"
+      : "pending";
+    await upsertDiscordSubscriber(
+      env.DB,
+      channelId,
+      interaction.guild_id ?? "direct-message",
+      user.id,
+      status,
+    );
     await editDiscordInteractionResponse(
       interaction.application_id,
       interaction.token,
-      "✅ Avisos ativados neste canal. Todas as lojas estão selecionadas.",
+      status === "approved"
+        ? "✅ Avisos ativados. Todas as lojas estão selecionadas."
+        : "⏳ Solicitação registrada. Você receberá uma mensagem após a análise do proprietário.",
     );
     return;
   }
@@ -175,12 +299,19 @@ async function processCommand(
       interaction.token,
       [
         "**Comandos**",
-        "`/ativar` — ativa avisos neste canal (administrador)",
+        "`/ativar` — ativa avisos nesta conversa privada",
         "`/agora` — mostra ofertas ativas",
         "`/ultimos7dias` — mostra o histórico recente",
         "`/plataformas lojas:steam epic gog` — escolhe lojas",
         "`/status` — mostra a configuração",
-        "`/parar` — desativa avisos (administrador)",
+        "`/parar` — desativa os avisos",
+        ...(isOwner
+          ? [
+              "`/pendentes` — lista solicitações",
+              "`/aprovar usuario:ID` — aprova um usuário",
+              "`/negar usuario:ID` — nega um usuário",
+            ]
+          : []),
       ].join("\n"),
     );
     return;
@@ -191,17 +322,17 @@ async function processCommand(
     await editDiscordInteractionResponse(
       interaction.application_id,
       interaction.token,
-      "Os avisos não estão ativos neste canal. Um administrador deve usar `/ativar`.",
+      "Os avisos não estão ativos nesta conversa. Use `/ativar`.",
     );
     return;
   }
 
   if (name === "parar") {
-    if (!hasManageGuild(interaction)) {
+    if (isGuild && !hasManageGuild(interaction)) {
       await editDiscordInteractionResponse(
         interaction.application_id,
         interaction.token,
-        "Você precisa da permissão **Gerenciar servidor** para desativar avisos.",
+        "Você precisa da permissão **Gerenciar servidor** para desativar este canal.",
       );
       return;
     }
@@ -209,7 +340,7 @@ async function processCommand(
     await editDiscordInteractionResponse(
       interaction.application_id,
       interaction.token,
-      "🔕 Avisos automáticos desativados neste canal.",
+      "🔕 Avisos automáticos desativados nesta conversa.",
     );
     return;
   }
@@ -219,7 +350,7 @@ async function processCommand(
       interaction.application_id,
       interaction.token,
       [
-        "**Status do canal**",
+        "**Status da conversa privada**",
         `Avisos: ${subscriber.active ? "✅ ativos" : "🔕 desativados"}`,
         `Plataformas: ${platformNames(subscriber.platforms)}`,
         `Verificação: a cada ${env.CHECK_INTERVAL_LABEL ?? "30 minutos"}`,
@@ -229,11 +360,11 @@ async function processCommand(
   }
 
   if (name === "plataformas") {
-    if (!hasManageGuild(interaction)) {
+    if (isGuild && !hasManageGuild(interaction)) {
       await editDiscordInteractionResponse(
         interaction.application_id,
         interaction.token,
-        "Você precisa da permissão **Gerenciar servidor** para alterar as lojas.",
+        "Você precisa da permissão **Gerenciar servidor** para alterar este canal.",
       );
       return;
     }

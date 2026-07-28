@@ -1,60 +1,56 @@
 # Configuração do Discord
 
-Este guia configura a versão combinada para receber slash commands e publicar
-avisos em canais Discord.
+O modo padrão envia avisos por mensagem direta (DM). A mesma instalação pode
+ser configurada para canais de servidor ou para os dois destinos.
 
-## 1. Criar uma aplicação
+## 1. Criar e instalar a aplicação
 
-1. Acesse o [Discord Developer Portal](https://discord.com/developers/applications);
-2. selecione **New Application**;
-3. dê um nome à aplicação;
-4. copie o **Application ID** em **General Information**;
-5. copie a **Public Key** na mesma página.
+1. No [Discord Developer Portal](https://discord.com/developers/applications),
+   crie uma aplicação;
+2. em **General Information**, copie o Application ID e a Public Key;
+3. em **Bot**, use **Reset Token** e guarde o token como senha;
+4. em **Installation**, habilite `applications.commands` e `bot`;
+5. para uso em canais, conceda também `Send Messages`;
+6. instale a aplicação em um servidor compartilhado com as pessoas que usarão
+   as DMs do bot.
 
-## 2. Criar o bot e guardar o token
+Nunca publique o bot token.
 
-1. Abra **Bot**;
-2. crie o bot, se necessário;
-3. use **Reset Token** e copie o token;
-4. guarde-o como senha.
+## 2. Obter seu ID de usuário
 
-Nunca publique o token no GitHub, em capturas de tela ou em arquivos de
-configuração versionados.
+No Discord, abra **Configurações > Avançado**, ative **Modo desenvolvedor**,
+clique com o botão direito no seu perfil e escolha **Copiar ID do usuário**.
+Esse valor será `DISCORD_OWNER_USER_ID`.
 
-## 3. Configurar a instalação
+## 3. Escolher destino e acesso
 
-Em **Installation**, configure a instalação no servidor com:
-
-- escopos `applications.commands` e `bot`;
-- permissão `Send Messages`.
-
-Copie o link de instalação, abra-o no navegador e adicione a aplicação a um
-servidor de teste no qual você tenha permissão administrativa.
-
-## 4. Obter o ID do servidor para testes
-
-No Discord:
-
-1. abra **Configurações > Avançado**;
-2. ative **Modo desenvolvedor**;
-3. clique com o botão direito no servidor;
-4. selecione **Copiar ID do servidor**.
-
-Adicione temporariamente ao bloco `vars` de `wrangler.jsonc`:
+Adicione ao bloco `vars` de `wrangler.jsonc`:
 
 ```jsonc
-"DISCORD_GUILD_ID": "ID_DO_SERVIDOR_DE_TESTE"
+"DISCORD_OWNER_USER_ID": "SEU_ID_DE_USUARIO",
+"DISCORD_ACCESS_MODE": "approval",
+"DISCORD_DELIVERY_MODE": "dm"
 ```
 
-Comandos de servidor aparecem imediatamente. Remova a variável quando quiser
-registrar comandos globais.
+Destinos disponíveis:
 
-## 5. Cadastrar variáveis na Cloudflare
+- `dm`: somente mensagens diretas; é o padrão recomendado para uso pessoal;
+- `channel`: somente canais de servidor;
+- `both`: permite que cada pessoa ative uma DM ou um canal.
 
-O `DISCORD_APPLICATION_ID` e o `DISCORD_PUBLIC_KEY` são dados públicos da
-aplicação. O `DISCORD_BOT_TOKEN` e o `ADMIN_SETUP_KEY` são segredos e nunca
-devem aparecer em commits, issues ou capturas de tela. Para simplificar a
-configuração, os quatro podem ser informados de forma interativa:
+Modos de acesso:
+
+- `approval`: novos usuários aguardam sua aprovação;
+- `owner_only`: somente o proprietário;
+- `open`: qualquer usuário pode ativar.
+
+Ao mudar `DISCORD_DELIVERY_MODE`, execute novamente
+`/admin/setup-discord` para atualizar os contextos dos comandos.
+
+## 4. Cadastrar variáveis na Cloudflare
+
+Application ID e Public Key são identificadores públicos. Bot token e
+`ADMIN_SETUP_KEY` são segredos:
 
 ```bash
 npx wrangler secret put DISCORD_APPLICATION_ID
@@ -63,24 +59,13 @@ npx wrangler secret put DISCORD_BOT_TOKEN
 npx wrangler secret put ADMIN_SETUP_KEY
 ```
 
-No Windows PowerShell, substitua `npx` por `npx.cmd`.
+No Windows PowerShell, use `npx.cmd` se os scripts `.ps1` estiverem bloqueados.
 
-## 6. Publicar e registrar comandos
+## 5. Migrar, publicar e registrar comandos
 
 ```bash
+npm run db:migrate:remote
 npm run deploy
-```
-
-Guarde a URL do Worker. Registre os comandos usando a chave administrativa:
-
-```powershell
-$seguro = Read-Host "ADMIN_SETUP_KEY" -AsSecureString
-$chave = [System.Net.NetworkCredential]::new("", $seguro).Password
-$cabecalhos = @{ Authorization = "Bearer $chave" }
-
-Invoke-RestMethod -Method Post `
-  -Uri "https://SEU_WORKER.workers.dev/admin/setup-discord" `
-  -Headers $cabecalhos
 ```
 
 No Linux:
@@ -91,33 +76,48 @@ curl -X POST \
   https://SEU_WORKER.workers.dev/admin/setup-discord
 ```
 
-## 7. Configurar o endpoint de Interactions
+No Windows PowerShell:
 
-No Developer Portal, abra **General Information** e informe:
+```powershell
+$seguro = Read-Host "ADMIN_SETUP_KEY" -AsSecureString
+$chave = [System.Net.NetworkCredential]::new("", $seguro).Password
+$cabecalhos = @{ Authorization = "Bearer $chave" }
+Invoke-RestMethod -Method Post `
+  -Uri "https://SEU_WORKER.workers.dev/admin/setup-discord" `
+  -Headers $cabecalhos
+```
+
+Em **General Information > Interactions Endpoint URL**, informe:
 
 ```text
 https://SEU_WORKER.workers.dev/discord/interactions
 ```
 
-O Discord enviará uma verificação assinada. O Worker só aceitará o endpoint se
-a chave pública estiver correta.
+## 6. Usar em DM
 
-## 8. Ativar um canal
+Abra a conversa privada com o bot e execute `/ativar`. O proprietário é
+aprovado automaticamente. Outras pessoas ficam pendentes no modo `approval`.
 
-No canal escolhido, um administrador deve executar:
+O proprietário administra solicitações com:
 
 ```text
-/ativar
+/pendentes
+/aprovar usuario:ID
+/negar usuario:ID
 ```
 
-Depois, teste `/status`, `/agora` e `/plataformas`.
+A pessoa recebe a decisão na própria DM.
+
+## 7. Usar em canal
+
+Defina `DISCORD_DELIVERY_MODE` como `channel` ou `both`, registre novamente os
+comandos e execute `/ativar` no canal desejado. Ativar, parar ou alterar lojas
+em um canal exige **Gerenciar servidor**.
 
 ## Solução de problemas
 
-- **Invalid interaction application command**: registre os comandos novamente;
-- **Assinatura inválida**: confira `DISCORD_PUBLIC_KEY`;
-- **Missing Access ou 403**: reinstale a aplicação com `Send Messages`;
-- **Comandos globais não aparecem**: aguarde a propagação ou use
-  `DISCORD_GUILD_ID` durante o desenvolvimento;
-- **Avisos não chegam**: confirme `/status`, permissões do canal e os logs com
-  `npx wrangler tail`.
+- comandos não aparecem em DM: confirme que são globais, que a aplicação
+  compartilha um servidor com você e registre-os novamente;
+- assinatura inválida: confira `DISCORD_PUBLIC_KEY`;
+- erro 403 no canal: reinstale o bot com `Send Messages`;
+- avisos não chegam: confira `/status`, as migrações e `npx wrangler tail`.
